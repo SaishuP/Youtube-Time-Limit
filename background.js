@@ -5,7 +5,7 @@ chrome.runtime.onStartup.addListener(initialize);
 chrome.runtime.onInstalled.addListener(initialize);
 
 function initialize() {
-  chrome.storage.local.get(['watchTime', 'lastReset', 'timeLimit'], function (result) {
+  chrome.storage.local.get(['watchTime', 'lastReset', 'timeLimit', 'bypassLinks'], function (result) {
     const now = new Date();
     const today = now.toDateString();
     
@@ -32,14 +32,19 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 
   if (alarm.name === 'checkYouTubeTime') {
-    chrome.storage.local.get(['watchTime', 'timeLimit'], function (result) {
+    chrome.storage.local.get(['watchTime', 'timeLimit', 'bypassLinks'], function (result) {
       const timeLimit = result.timeLimit || 30;
-      if (result.watchTime >= timeLimit) {
-        chrome.tabs.query({ url: '*://*.youtube.com/*' }, function (tabs) {
-          tabs.forEach((tab) => chrome.tabs.remove(tab.id));
-        });
-        alert('You have reached your YouTube watch limit for today!');
-      }
+      const bypassLinks = result.bypassLinks || [];
+      
+      // Check if any open YouTube tab is not in the bypass list
+      chrome.tabs.query({ url: '*://*.youtube.com/*' }, function (tabs) {
+        const nonBypassedTabs = tabs.filter(tab => !bypassLinks.some(link => tab.url.includes(link)));
+
+        if (result.watchTime >= timeLimit && nonBypassedTabs.length > 0) {
+          nonBypassedTabs.forEach((tab) => chrome.tabs.remove(tab.id));
+          alert('You have reached your YouTube watch limit for today!');
+        }
+      });
     });
   }
 });
@@ -59,12 +64,17 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   }
 });
 
-// Increment watch time every minute
+// Increment watch time every minute for non-bypassed links
 setInterval(() => {
-  chrome.tabs.query({ url: '*://*.youtube.com/*' }, function (tabs) {
-    if (tabs.length > 0) {
-      watchTime += 1 / 60; // Increment by 1 minute every minute
-      chrome.storage.local.set({ watchTime: watchTime });
-    }
+  chrome.storage.local.get(['bypassLinks'], function (result) {
+    const bypassLinks = result.bypassLinks || [];
+    chrome.tabs.query({ url: '*://*.youtube.com/*' }, function (tabs) {
+      const nonBypassedTabs = tabs.filter(tab => !bypassLinks.some(link => tab.url.includes(link)));
+
+      if (nonBypassedTabs.length > 0) {
+        watchTime += 1 / 60; // Increment by 1 minute every minute
+        chrome.storage.local.set({ watchTime: watchTime });
+      }
+    });
   });
 }, 60000); // 60000ms = 1 minute
